@@ -14,20 +14,20 @@ struct sock;
 #endif
 
 // bio.c
-void            binit(void);
-struct buf*     bread(uint, uint);
-void            brelse(struct buf*);
-void            bwrite(struct buf*);
-void            bpin(struct buf*);
-void            bunpin(struct buf*);
+void binit(void);
+struct buf *bread(uint, uint);
+void brelse(struct buf *);
+void bwrite(struct buf *);
+void bpin(struct buf *);
+void bunpin(struct buf *);
 
 // console.c
-void            consoleinit(void);
-void            consoleintr(int);
-void            consputc(int);
+void consoleinit(void);
+void consoleintr(int);
+void consputc(int);
 
 // exec.c
-int             exec(char*, char**);
+int exec(char*, char**);
 
 // file.c
 struct file*    filealloc(void);
@@ -178,6 +178,11 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+
+void            vmprint(pagetable_t);
+pagetable_t     proc_kvmcreate();
+void            proc_kvmfree(pagetable_t p);
+void            kvmmapuser(int pid, pagetable_t kpagetable, pagetable_t upagetable, uint64 newsz, uint64 oldsz);
 
 // plic.c
 void            plicinit(void);
