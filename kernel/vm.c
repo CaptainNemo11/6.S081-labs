@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -14,6 +16,10 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+extern uint64 page_ref_count[PHYSTOP >> 12];
+extern struct spinlock pg_ref_ct;
+
 
 /*
  * create a direct-map page table for the kernel.
@@ -311,7 +317,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  //char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -319,12 +325,17 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    *pte &= ~PTE_W;
+    *pte |= PTE_COW;
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+    /*if((mem = kalloc()) == 0)
       goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    memmove(mem, (char*)pa, PGSIZE);*/
+    acquire(&pg_ref_ct);
+    page_ref_count[pa>>12] += 1;
+    release(&pg_ref_ct);
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
+      //kfree(mem);
       goto err;
     }
   }
@@ -358,9 +369,32 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    
+    if(va0 >= MAXVA) return -1;
+
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
+    
+    struct proc* p=myproc();
+    pte_t *pte = walk(pagetable, va0, 0);
+    if (pte == 0) return -1;
+    if((*pte & PTE_V)==0 || (*pte & PTE_U)==0) return -1;
+    if(*pte & PTE_COW ){
+      uint64 ka = (uint64)kalloc();
+      if(ka == 0){
+        p->killed = 1;
+        return -1;
+      }else{
+      memmove((void*)ka, (void*)pa0, PGSIZE);
+      uint flags = PTE_FLAGS(*pte);
+      kfree((void*)pa0);
+      *pte = PA2PTE(ka) | flags |PTE_W ;
+      *pte &= ~PTE_COW;
+      //pa0 = ka;
+      }
+    } 
+    pa0 = PTE2PA(*pte);
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;

@@ -65,6 +65,32 @@ usertrap(void)
     intr_on();
 
     syscall();
+  }else if(r_scause() == 15){
+    //cow page fault
+    uint64 va = r_stval();
+    if(va >= MAXVA) {
+      p->killed = 1;
+      exit(-1);
+    }
+    va = PGROUNDDOWN(va);
+    pte_t *pte;
+    pte = walk(p->pagetable, va, 0);
+    if((pte == 0) || (*pte & PTE_U) == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_COW)==0 ){
+      p->killed =1;
+      exit(-1);
+    }
+    uint64 pa = PTE2PA(*pte);
+    uint64 ka = (uint64)kalloc();
+    
+    if(ka == 0){
+      p->killed = 1;  
+      exit(-1);
+    }
+    memmove((void*)ka, (void*)pa, PGSIZE);
+    kfree((void*)pa);
+    uint64 flags = (PTE_FLAGS(*pte)|PTE_W );
+    *pte = PA2PTE(ka)|flags;
+    *pte &= ~PTE_COW;
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -72,6 +98,7 @@ usertrap(void)
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }
+   
 
   if(p->killed)
     exit(-1);
