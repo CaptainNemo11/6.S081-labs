@@ -292,18 +292,21 @@ sys_open(void)
   struct inode *ip;
   int n;
 
+  int k = 0;
+  char sympath[MAXPATH];
+
   if((n = argstr(0, path, MAXPATH)) < 0 || argint(1, &omode) < 0)
     return -1;
 
   begin_op();
 
-  if(omode & O_CREATE){
+  if(omode & O_CREATE && !(omode & O_NOFOLLOW)){
     ip = create(path, T_FILE, 0, 0);
     if(ip == 0){
       end_op();
       return -1;
     }
-  } else {
+  }else{
     if((ip = namei(path)) == 0){
       end_op();
       return -1;
@@ -314,13 +317,40 @@ sys_open(void)
       end_op();
       return -1;
     }
+    if((ip->type == T_SYMLINK) && !(omode & O_NOFOLLOW)){
+       do{ 
+        if(readi(ip, 0, (uint64)sympath, 0, ip->size) > MAXPATH){
+            iunlockput(ip);
+            end_op();
+            return -1;
+        }
+        iunlockput(ip);
+        end_op();
+        
+        begin_op();
+        ip = namei(sympath);
+        if(ip == 0){
+            end_op();
+            return -1;
+        }
+        ilock(ip);
+        k++;
+       }while ((ip ->type == T_SYMLINK) && (k < THRESHOLD));
+       if((ip->type == T_SYMLINK) && (k == THRESHOLD)){
+            iunlockput(ip);
+            end_op();
+            return -1;
+    }
   }
+  
+ }
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
     end_op();
     return -1;
   }
+
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
@@ -484,3 +514,34 @@ sys_pipe(void)
   }
   return 0;
 }
+
+//symbolic link
+uint64
+sys_symlink(void)
+{   
+   char target[MAXPATH], path[MAXPATH];
+   int n;
+   short major = 0, minor = 0;
+   if((n = argstr(0, target, MAXPATH)) < 0)
+       return -1;
+   if(argstr(1, path, MAXPATH) < 0)
+       return -1;
+   struct inode* ip;
+   begin_op();
+
+   ip = create(path, T_SYMLINK, major, minor);
+
+   if(ip == 0){
+       end_op();
+       return -1;
+   }
+
+   if((writei(ip, 0, (uint64)target, 0, n)) != n){
+       end_op();
+       return -1;
+   }
+   iunlockput(ip); 
+   end_op();
+   return 0;
+}
+   
