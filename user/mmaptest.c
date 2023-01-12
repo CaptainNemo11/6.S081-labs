@@ -271,7 +271,6 @@ fork_test(void)
   // read just 2nd page.
   if(*(p1+PGSIZE) != 'A')
     err("fork mismatch (1)");
-
   if((pid = fork()) < 0)
     err("fork");
   if (pid == 0) {
@@ -282,7 +281,6 @@ fork_test(void)
 
   int status = -1;
   wait(&status);
-
   if(status != 0){
     printf("fork_test failed\n");
     exit(1);

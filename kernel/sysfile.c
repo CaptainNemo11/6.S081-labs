@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#define MAP_FAILED ((char *) -1)
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -483,4 +484,80 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+uint64
+sys_mmap(void)
+{
+    uint64 addr;
+    int length, prot, flags, off;
+    struct file *f;
+    if(argint(1, &length) < 0 ||argint(2, &prot) < 0 || 
+            argint(3, &flags) < 0 || argfd(4, 0, &f) < 0 ||argint(5, &off) < 0)
+        return (uint64)MAP_FAILED;
+    if((!f->writable) && (prot & PROT_WRITE) && (flags & MAP_SHARED))
+        return (uint64)MAP_FAILED;
+    //printf("mmap: length=%x\n",length);
+    struct proc *p = myproc();
+    //printf("orignal_mapsz %x \n ",p->sz);
+    //mmap
+    int i = 0;
+    for (; i<NVMA; i++)
+    {
+        if(!p->vma[i].valid){
+            p->vma[i].prot = prot;
+            p->vma[i].flags = flags;
+            p->vma[i].addr = addr = p->sz;
+            p->vma[i].file = f;
+            p->vma[i].off = off;
+            p->vma[i].length = length;
+            p->vma[i].valid = 1;
+            filedup(f);
+            p->sz += length; //lazy map
+            break;
+        }
+    }
+    if (i == NVMA)
+        return  (uint64)MAP_FAILED;
+        
+    //printf("mapsz %x \n ",p->sz);
+    return addr;
+}
+
+uint64
+sys_munmap(void)
+{
+    uint64 addr;
+    int length;
+    if( argaddr(0, &addr) < 0 || argint(1, &length) < 0)
+        return -1;
+    int i = 0;
+    struct proc *p = myproc();
+    for (; i< NVMA; i++){
+        if( p->vma[i].addr <= addr && (p->vma[i].addr+p->vma[i].length) >addr && p->vma[i].valid){
+            if(p->vma[i].flags & MAP_SHARED)
+                filewrite(p->vma[i].file, addr, length);
+            if(p->vma[i].addr == addr && p->vma[i].length == length){
+                fileclose(p->vma[i].file);
+                uvmunmap(p->pagetable, addr, length/PGSIZE, 1);
+                p->sz -= length;
+                p->vma[i].valid = 0;
+            }
+            //for the test :page aligned
+            else if(addr +length == p->vma[i].addr+p->vma[i].length){
+                uvmunmap(p->pagetable, addr, length/PGSIZE,1);
+                p->vma[i].length = p->vma[i].length-length;
+                p->sz -= length;
+            }else if(p->vma[i].addr == addr){
+                uvmunmap(p->pagetable, addr, length/PGSIZE,1);
+                p->vma[i].addr = addr+length;
+                p->vma[i].length = p->vma[i].length-length;
+                //p->sz -= length;
+            }
+                //printf("\nslotold_addr %x slotold_len %x valid  %d\n", p->vma[i].addr, p->vma[i].length, p->vma[i].valid);
+        break;
+        }
+    }
+    if( i == NVMA)
+        return -1;
+    return 0;
 }

@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -113,6 +114,12 @@ allocproc(void)
 
 found:
   p->pid = allocpid();
+
+  //initialize vma 
+  for (int i = 0; i < NVMA; i++) {
+      p->vma[i].valid = 0;
+  }
+  
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -274,12 +281,27 @@ fork(void)
     return -1;
   }
 
+  //memory mapped for child
+  for(int i =0; i<NVMA; i++)
+  {
+      if(p->vma[i].valid){
+          np->vma[i].valid = 1;
+          np->vma[i].addr = p->vma[i].addr;
+          np->vma[i].prot = p->vma[i].prot;
+          np->vma[i].length = p->vma[i].length;
+          np->vma[i].flags = p->vma[i].flags;
+          np->vma[i].off = p->vma[i].off;
+          np->vma[i].file = p->vma[i].file;
+          filedup(np->vma[i].file);
+      }
+  }
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
   }
+
   np->sz = p->sz;
 
   np->parent = p;
@@ -343,6 +365,16 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  //ummap all mapped files
+  for (int i = 0; i<NVMA; i++){
+      if (p->vma[i].valid){
+          if(p->vma[i].flags & MAP_SHARED)
+              filewrite(p->vma[i].file, p->vma[i].addr, p->vma[i].length);
+          uvmunmap(p->pagetable, p->vma[i].addr, p->vma[i].length/PGSIZE, 1);
+          fileclose(p->vma[i].file);
+      }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
